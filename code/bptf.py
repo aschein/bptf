@@ -9,7 +9,7 @@ from sklearn.utils.extmath import fast_dot
 from sklearn.base import BaseEstimator, TransformerMixin
 from path import path
 from argparse import ArgumentParser
-from utils_ptf import make_first_mode, serialize_bptf, parafac
+from utils import make_first_mode, serialize_bptf, parafac
 
 
 class BPTF(BaseEstimator, TransformerMixin):
@@ -79,9 +79,9 @@ class BPTF(BaseEstimator, TransformerMixin):
         for m in xrange(self.n_modes):
             D = self.mode_dims[m]
 
-            B += (self.a - 1.) * (np.log(self.G_DK_M[m]).sum())
-            B -= (self.a * self.beta_M[m])*(self.sumE_MK[m, :].sum())
-            B -= K*D*(sp.gammaln(self.a) - self.a*np.log(self.a * self.beta_M[m]))
+            B += (self.alpha - 1.) * (np.log(self.G_DK_M[m]).sum())
+            B -= (self.alpha * self.beta_M[m])*(self.sumE_MK[m, :].sum())
+            B -= K*D*(sp.gammaln(self.alpha) - self.alpha*np.log(self.alpha * self.beta_M[m]))
 
             gamma_DK = self.gamma_DK_M[m]
             delta_DK = self.delta_DK_M[m]
@@ -145,7 +145,7 @@ class BPTF(BaseEstimator, TransformerMixin):
         assert np.isfinite(self.delta_DK_M[m]).all()
 
     def _update_gamma(self, m, data):
-        self.gamma_DK_M[m][:, :] = self.a
+        self.gamma_DK_M[m][:, :] = self.alpha
         tmp = data[self.sparse_idx] / self._sparse_zeta()
         for k in xrange(self.n_components):
             bar = tmp.copy()
@@ -157,7 +157,7 @@ class BPTF(BaseEstimator, TransformerMixin):
                                                     minlength=self.mode_dims[m])
 
     def _update_delta(self, m, mask=None, drop_diag=False):
-        self.delta_DK_M[m][:, :] = self.a * self.beta_M[m]
+        self.delta_DK_M[m][:, :] = self.alpha * self.beta_M[m]
         if mask is None and not drop_diag:
             self.sumE_MK[m, :] = 1.
             self.delta_DK_M[m][:, :] += self.sumE_MK.prod(axis=0)
