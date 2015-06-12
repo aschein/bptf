@@ -1,4 +1,4 @@
 # bptf
 Bayesian Poisson tensor factorization
 
-(Coming soon...)
+(Comments coming soon...)
