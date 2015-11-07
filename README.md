@@ -25,7 +25,7 @@ SOFTWARE.
 
 ## What's included:
 
-* [bptf.py](https://github.com/aschein/bptf/blob/master/code/bptf.py): The main code file.  Implements batch ariational inference for BPTF.
+* [bptf.py](https://github.com/aschein/bptf/blob/master/code/bptf.py): The main code file.  Implements batch variational inference for BPTF.
 * [utils.py](https://github.com/aschein/bptf/blob/master/code/utils.py): Utility functions.  Includes some important multilinear algebra functions (e.g., PARAFAC, Khatri-Rao product), preprocessing functions, and serialization functions.
 
 ## Dependencies:
