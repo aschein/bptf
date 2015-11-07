@@ -109,4 +109,24 @@ tmp_labels = data_dict['labels']
 assert np.allclose(tmp_data, data)
 assert np.allclose(tmp_labels, labels) 
 ```
+# Output:
+Results will be serialized in a `.npz` file in the given output directory.  By default, if no results files exist in the provided directory, the results file will be called `1_trained_model.npz`.  If results files are already present, the results file will be named by incrementing the latest (e.g., `6_trained_model.npz` if 5 already exist).  In addition, a file containing the dictionary of initial parameters (e.g., `n_components`, `alpha`) is pickled as `1_trained_model.dat`.  The `.npz` file contains the inferred variational parameters, expectations of the latent factors (computed from the variational parameters), and inferred rate parameters.
+```
+import numpy as np
 
+results = np.load('1_trained_model.npz')
+
+# Variational parameters
+gamma_DK_M = results['gamma_DK_M'] # shape variational parameters
+delta_DK_M = results['delta_DK_M'] # rate variational parameters
+
+# Expectations of factors
+E_DK_M = results['E_DK_M']  # arithmetic expectation
+G_DK_M = results['G_DK_M']  # geometric expectation
+
+# Inferred rate parameters
+beta_M = results['beta_M']
+```
+The naming convention `_DK_M` tells you the size/shape of the object.  A variable with one underscore---e.g., `E_DK`---is a `numpy.ndarray` that has shape (D, K).  A variable with two underscores---e.g., `E_DK_M`---is a Python `list` of M `numpy.ndarray` objects each with shape (Dm, K), where the first dimension (Dm) may be different across the M arrays but the second dimension K (number of components) is shared.
+
+Either of the two lists `E_DK_M` and `G_DK_M` correspond to the usual list of factor matrices returned by any tensor factorization (CP-decomposition/PARAFAC) model.  They are two different point-estimates (i.e., expectations) of the factor matrices under the variational distribution.  For more information on the two expectations, see Section 7 of the paper.   
