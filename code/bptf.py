@@ -266,7 +266,7 @@ class BPTF(BaseEstimator, TransformerMixin):
         elif version == 'arithmetic':
             return [self.E_DK_M[m] for m in modes]
 
-    def reconstruct(self, mask=None, version='geometric'):
+    def reconstruct(self, mask=None, version='geometric', drop_diag=False):
         """Reconstruct data using point estimates of latent factors.
 
         Currently supported only up to 5-way tensors.
@@ -277,10 +277,6 @@ class BPTF(BaseEstimator, TransformerMixin):
         elif version == 'arithmetic':
             tmp = [E_DK.copy() for E_DK in self.E_DK_M]
 
-        if weights.keys():
-            assert all(m in range(self.n_modes) for m in weights.keys())
-            for m, weight_matrix in weights.iteritems():
-                tmp[m] = weight_matrix
         Y_pred = parafac(tmp)
         if drop_diag:
             diag_idx = np.identity(Y_pred.shape[0]).astype(bool)
