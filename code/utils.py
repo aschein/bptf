@@ -7,21 +7,6 @@ from path import path
 from time import sleep
 
 
-def make_first_mode(X, m):
-    """ Make a mode the first mode in a tensor. """
-    order = range(X.ndim)
-    if m == 0:
-        return X, order
-    Y = X.swapaxes(m-1, m)
-    order[m], order[m-1] = order[m-1], order[m]
-    m -= 1
-    while m > 0:
-        Y = Y.swapaxes(m-1, m)
-        order[m], order[m-1] = order[m-1], order[m]
-        m -= 1
-    return Y, order
-
-
 def is_binary(X):
     """Checks whether input is a binary integer tensor."""
     if np.issubdtype(X.dtype, int):
@@ -60,18 +45,24 @@ def sptensor_from_dense_array(X):
 
 
 def preprocess(X):
-    """Preprocesses input data tensor.
+    """Preprocesses input dense data tensor.
 
     If data is sparse, returns an int sptensor.
     Otherwise, returns an int dtensor.
     """
-    if not np.issubdtype(X.dtype, int):
-        X = X.astype(int)
-    if isinstance(X, np.ndarray) and is_sparse(X):
-        X = sptensor_from_dense_array(X)
+    if isinstance(X, skt.sptensor):
+        if not np.issubdtype(X.dtype, int):
+            X.vals = X.vals.astype(int)
+            X.dtype = int
+        return X
     else:
-        X = skt.dtensor(X)
-    return X
+        if not np.issubdtype(X.dtype, int):
+            X = X.astype(int)
+        if is_sparse(X):
+            return sptensor_from_dense_array(X)
+        else:
+            if not isinstance(X, skt.dtensor):
+                return skt.dtensor(X)
 
 
 def uttkrp(X, m, U):
