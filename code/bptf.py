@@ -154,6 +154,9 @@ class BPTF(BaseEstimator, TransformerMixin):
         else:
             modes = range(self.n_modes)
         assert all(m in range(self.n_modes) for m in modes)
+        for m in range(self.n_modes):
+            if m not in modes:
+                self._clamp_component(m)
 
         curr_elbo = -np.inf
         for itn in xrange(self.max_iter):
@@ -173,6 +176,8 @@ class BPTF(BaseEstimator, TransformerMixin):
                        Objective: %.2f\t\
                        Change: %.5f\t'\
                        % (itn, e, bound, delta)
+            if not delta >= 0.0:
+                print delta
             assert ((delta >= 0.0) or (itn == 0))
             curr_elbo = bound
             if delta < self.tol:
@@ -186,6 +191,18 @@ class BPTF(BaseEstimator, TransformerMixin):
         self.gamma_DK_M[m] = gamma_DK.copy()
         self.delta_DK_M[m] = delta_DK.copy()
         self.beta_M[m] = 1. / E_DK.mean()
+
+    def _clamp_component(self, m, version='geometric'):
+        """Make a component a constant.
+
+        This amounts to setting the expectations under the
+        Q-distribution to be equal to a single point estimate.
+        """
+        assert (version == 'geometric') or (version == 'arithmetic')
+        if version == 'geometric':
+            self.E_DK_M[m][:, :] = self.G_DK_M[m]
+        else:
+            self.G_DK_M[m][:, :] = self.E_DK_M[m]
 
     def set_component_like(self, m, model, subs_D=None):
         assert model.n_modes == self.n_modes
