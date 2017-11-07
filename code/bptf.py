@@ -57,7 +57,7 @@ class BPTF(BaseEstimator, TransformerMixin):
             uttkrp_DK = mask.uttkrp(self.E_DK_M, 0)
             uttkrp_K = (self.E_DK_M[0] * uttkrp_DK).sum(axis=0)
         elif isinstance(mask, skt.sptensor):
-            uttkrp_DK = sp_uttkrp(mask.vals, mask.subs, 0, self.G_DK_M)  # is this a bug?
+            uttkrp_DK = sp_uttkrp(mask.vals, mask.subs, 0, self.E_DK_M)
             uttkrp_K = (self.E_DK_M[0] * uttkrp_DK).sum(axis=0)
 
         bound = uttkrp_K.sum()
