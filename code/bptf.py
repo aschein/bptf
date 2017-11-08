@@ -54,36 +54,28 @@ class BPTF(BaseEstimator, TransformerMixin):
         self.nz_recon_I = nz_recon_IK.sum(axis=1)
         return self.nz_recon_I
 
-    def _bound(self, data):
+    def _test_elbo(self, data):
+        """Copies code from pmf.py.  Used for debugging."""
         assert data.ndim == 2
-        X = np.array(data)
+        if isinstance(data, skt.sptensor):
+            X = data.toarray()
+        else:
+            X = np.array(data)
         Et = self.E_DK_M[0]
         Eb = self.E_DK_M[1].T
         Elogt = self.L_DK_M[0]
         Elogb = self.L_DK_M[1].T
-        xexplog = np.dot(np.exp(Elogt), np.exp(Elogb))
-
-        bound = np.sum(X * np.log(xexplog) - Et.dot(Eb))
-
+        gamma_t = self.gamma_DK_M[0]
+        gamma_b = self.gamma_DK_M[1].T
+        rho_t = self.delta_DK_M[0]
+        rho_b = self.delta_DK_M[1].T
+        Z = np.dot(np.exp(Elogt), np.exp(Elogb))
+        bound = np.sum(X * np.log(Z) - Et.dot(Eb))
         a = self.alpha
         c = self.beta_M[0]
-        gamma_t = self.gamma_DK_M[0]
-        rho_t = self.delta_DK_M[0]
-        bound += _gamma_term(a, a * c,
-                             gamma_t, rho_t,
-                             Et, Elogt)
-
+        bound += _gamma_bound_term(a, a * c, gamma_t, rho_t).sum()
         bound += self.n_components * X.shape[0] * a * np.log(c)
-
-        b = self.alpha
-        c = self.beta_M[1]
-        gamma_b = self.gamma_DK_M[1].T
-        rho_b = self.delta_DK_M[1].T
-        bound += _gamma_term(b, b * c, gamma_b, rho_b,
-                             Eb, Elogb)
-
-        bound += self.n_components * X.shape[1] * a * np.log(c)
-
+        bound += _gamma_bound_term(a, a, gamma_b, rho_b).sum()
         return bound
 
     def _elbo(self, data, mask=None):
@@ -128,19 +120,20 @@ class BPTF(BaseEstimator, TransformerMixin):
     def _init_component(self, m, dim):
         assert self.mode_dims[m] == dim
         K = self.n_components
+        s = self.smoothness
         if not self.debug:
-            s = self.smoothness
             gamma_DK = s * rn.gamma(s, 1. / s, size=(dim, K))
             delta_DK = s * rn.gamma(s, 1. / s, size=(dim, K))
         else:
-            gamma_DK = np.ones((dim, K))
-            delta_DK = np.ones((dim, K))
+            gamma_DK = s * np.ones((dim, K))
+            delta_DK = s * np.ones((dim, K))
         self.gamma_DK_M[m] = gamma_DK
         self.delta_DK_M[m] = delta_DK
         self.E_DK_M[m] = gamma_DK / delta_DK
         self.sumE_MK[m, :] = self.E_DK_M[m].sum(axis=0)
         self.L_DK_M[m] = sp.psi(gamma_DK) - np.log(delta_DK)
-        self.beta_M[m] = 1. / self.E_DK_M[m].mean()
+        if m == 0 or not self.debug:
+            self.beta_M[m] = 1. / self.E_DK_M[m].mean()
 
     def _check_component(self, m):
         assert np.isfinite(self.E_DK_M[m]).all()
@@ -191,26 +184,40 @@ class BPTF(BaseEstimator, TransformerMixin):
             if m not in modes:
                 self._clamp_component(m)
 
-        curr_elbo = -np.inf
+        if self.debug:
+            curr_elbo = self._test_elbo(data)
+        else:
+            curr_elbo = self._elbo(data, mask=mask)
+        if self.verbose:
+            print 'ITERATION %d:\t'\
+                  'Time: %f\t'\
+                  'Objective: %.2f\t'\
+                  'Change: %.5e\t'\
+                % (0, 0.0, curr_elbo, np.nan)
+
         for itn in xrange(self.max_iter):
             s = time.time()
             for m in modes:
                 self._update_gamma(m, data)
                 self._update_delta(m, mask)
                 self._update_cache(m)
-                self._update_beta(m)  # must come after cache update!
+                if m == 0 or not self.debug:
+                    self._update_beta(m)  # must come after cache update!
                 self._check_component(m)
-            bound = self._elbo(data, mask=mask)
-            delta = (bound - curr_elbo) / abs(curr_elbo) if itn > 0 else np.nan
+            if self.debug:
+                bound = self._test_elbo(data)
+            else:
+                bound = self._elbo(data, mask=mask)
+            delta = (bound - curr_elbo) / abs(curr_elbo)
             e = time.time() - s
             if self.verbose:
-                print 'ITERATION %d:\t\
-                       Time: %f\t\
-                       Objective: %.2f\t\
-                       Change: %.5f\t'\
-                       % (itn, e, bound, delta)
-
-            assert ((delta >= 0.0) or (itn == 0))
+                print 'ITERATION %d:\t'\
+                      'Time: %f\t'\
+                      'Objective: %.2f\t'\
+                      'Change: %.5e\t'\
+                      % (itn+1, e, bound, delta)
+            if not (delta >= 0.0):
+                raise Exception('\n\nNegative ELBO improvement: %e\n' % delta)
             curr_elbo = bound
             if delta < self.tol:
                 break
