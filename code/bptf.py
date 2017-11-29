@@ -1,4 +1,4 @@
- """
+"""
 Bayesian Poisson tensor factorization with variational inference.
 """
 import sys
@@ -6,6 +6,7 @@ import time
 import numpy as np
 import numpy.random as rn
 import scipy.special as sp
+from scipy.misc import logsumexp
 import sktensor as skt
 from sklearn.base import BaseEstimator, TransformerMixin
 
@@ -19,9 +20,15 @@ def _gamma_bound_term(pa, pb, qa, qb):
         (pa - qa) * sp.psi(qa) + qa * (1 - pb / qb)
 
 
+def _gamma_entropy(a, b):
+    return a - np.log(b) + sp.gammaln(a) + (1-a) * sp.psi(a)
+
+
 class BPTF(BaseEstimator, TransformerMixin):
     def __init__(self, n_modes=4, n_components=100,  max_iter=200, tol=0.0001,
-                 smoothness=100, verbose=True, alpha=0.1, debug=False):
+                 smoothness=100, verbose=True, alpha=0.1, debug=False,
+                 infer_alpha=False, min_alpha=0.0001, max_alpha=100):
+
         self.n_modes = n_modes
         self.n_components = n_components
         self.max_iter = max_iter
@@ -30,6 +37,13 @@ class BPTF(BaseEstimator, TransformerMixin):
         self.verbose = verbose
         self.debug = debug
 
+        self.infer_alpha = infer_alpha
+        self.min_alpha = min_alpha
+        self.max_alpha = max_alpha
+        num_alpha = (1. / min_alpha) * max_alpha
+        self.alpha_vals = np.linspace(min_alpha, max_alpha, num=num_alpha)
+        self._logZ = 0.
+
         self.alpha = alpha                                      # shape hyperparameter
         self.beta_M = np.ones(self.n_modes, dtype=float)        # rate hyperparameter (inferred)
 
@@ -37,7 +51,7 @@ class BPTF(BaseEstimator, TransformerMixin):
         self.delta_DK_M = np.empty(self.n_modes, dtype=object)  # variational rates
 
         self.E_DK_M = np.empty(self.n_modes, dtype=object)      # arithmetic expectations
-        self.G_DK_M = np.empty(self.n_modes, dtype=object)      # geometric expectations
+        self.L_DK_M = np.empty(self.n_modes, dtype=object)      # log-geometric expectations
 
         # Inference cache
         self.sumE_MK = np.empty((self.n_modes, self.n_components), dtype=float)
@@ -49,21 +63,22 @@ class BPTF(BaseEstimator, TransformerMixin):
         K = self.n_components
         nz_recon_IK = np.zeros((I, K))
         for m in xrange(self.n_modes):
-            nz_recon_IK *= self.G_DK_M[m][subs_I_M[m], :]
-        self.nz_recon_I = nz_recon_IK.sum(axis=1)
+            nz_recon_IK += self.L_DK_M[m][subs_I_M[m], :]
+        self.nz_recon_I = np.exp(nz_recon_IK).sum(axis=1)
         return self.nz_recon_I
 
     def _test_elbo(self, data):
         """Copies code from pmf.py.  Used for debugging."""
         assert data.ndim == 2
+        assert not self.infer_alpha
         if isinstance(data, skt.sptensor):
             X = data.toarray()
         else:
             X = np.array(data)
         Et = self.E_DK_M[0]
         Eb = self.E_DK_M[1].T
-        Elogt = np.log(self.G_DK_M[0])
-        Elogb = np.log(self.G_DK_M[1].T)
+        Elogt = self.L_DK_M[0]
+        Elogb = self.L_DK_M[1].T
         gamma_t = self.gamma_DK_M[0]
         gamma_b = self.gamma_DK_M[1].T
         rho_t = self.delta_DK_M[0]
@@ -103,11 +118,23 @@ class BPTF(BaseEstimator, TransformerMixin):
 
         K = self.n_components
         for m in xrange(self.n_modes):
-            bound += _gamma_bound_term(pa=self.alpha,
-                                       pb=self.alpha * self.beta_M[m],
-                                       qa=self.gamma_DK_M[m],
-                                       qb=self.delta_DK_M[m]).sum()
+            # bound += _gamma_bound_term(pa=self.alpha,
+            #                            pb=self.alpha * self.beta_M[m],
+            #                            qa=self.gamma_DK_M[m],
+            #                            qb=self.delta_DK_M[m]).sum()
+            bound += _gamma_entropy(self.gamma_DK_M[m], self.delta_DK_M[m]).sum()
             bound += K * self.mode_dims[m] * self.alpha * np.log(self.beta_M[m])
+
+        # if self.infer_alpha:
+        #     M = self.n_modes
+        #     K = self.n_components
+        #     vals = self.alpha_vals
+        #     logF = K * np.sum(self.mode_dims) * (vals * np.log(vals) - sp.gammaln(vals))
+        #     logF += (K * vals) * np.dot(np.log(self.beta_M), self.mode_dims)
+        #     logF += (vals - 1.) * np.sum([self.L_DK_M[m].sum() for m in range(M)])
+        #     logF -= vals * (self.sumE_MK.sum(axis=1) * self.beta_M).sum()
+        #     self._logZ = logsumexp(logF)
+        bound += self._logZ
         return bound
 
     def _init_all_components(self, mode_dims):
@@ -115,6 +142,7 @@ class BPTF(BaseEstimator, TransformerMixin):
         self.mode_dims = mode_dims
         for m, D in enumerate(mode_dims):
             self._init_component(m, D)
+            self._check_component(m)
 
     def _init_component(self, m, dim):
         assert self.mode_dims[m] == dim
@@ -130,28 +158,29 @@ class BPTF(BaseEstimator, TransformerMixin):
         self.delta_DK_M[m] = delta_DK
         self.E_DK_M[m] = gamma_DK / delta_DK
         self.sumE_MK[m, :] = self.E_DK_M[m].sum(axis=0)
-        self.G_DK_M[m] = np.exp(sp.psi(gamma_DK) - np.log(delta_DK))
+        self.L_DK_M[m] = sp.psi(gamma_DK) - np.log(delta_DK)
         if m == 0 or not self.debug:
-            self.beta_M[m] = 1. / self.E_DK_M[m].mean()
+            self._update_beta(m)
 
     def _check_component(self, m):
         assert np.isfinite(self.E_DK_M[m]).all()
-        assert np.isfinite(self.G_DK_M[m]).all()
+        assert np.isfinite(self.L_DK_M[m]).all()
         assert np.isfinite(self.gamma_DK_M[m]).all()
         assert np.isfinite(self.delta_DK_M[m]).all()
 
     def _update_gamma(self, m, data):
+        G_DK_M = [np.exp(L_DK) for L_DK in self.L_DK_M]
         if isinstance(data, skt.dtensor):
             tmp = data.astype(float)
             subs_I_M = data.nonzero()
             tmp[subs_I_M] /= self._reconstruct_nz(subs_I_M)
-            uttkrp_DK = tmp.uttkrp(self.G_DK_M, m)
+            uttkrp_DK = tmp.uttkrp(G_DK_M, m)
 
         elif isinstance(data, skt.sptensor):
             tmp = data.vals / self._reconstruct_nz(data.subs)
-            uttkrp_DK = sp_uttkrp(tmp, data.subs, m, self.G_DK_M)
+            uttkrp_DK = sp_uttkrp(tmp, data.subs, m, G_DK_M)
 
-        self.gamma_DK_M[m][:, :] = self.alpha + self.G_DK_M[m] * uttkrp_DK
+        self.gamma_DK_M[m][:, :] = self.alpha + G_DK_M[m] * uttkrp_DK
 
     def _update_delta(self, m, mask=None):
         if mask is None:
@@ -166,10 +195,22 @@ class BPTF(BaseEstimator, TransformerMixin):
         delta_DK = self.delta_DK_M[m]
         self.E_DK_M[m] = gamma_DK / delta_DK
         self.sumE_MK[m, :] = self.E_DK_M[m].sum(axis=0)
-        self.G_DK_M[m] = np.exp(sp.psi(gamma_DK) - np.log(delta_DK))
+        self.L_DK_M[m] = sp.psi(gamma_DK) - np.log(delta_DK)
 
     def _update_beta(self, m):
         self.beta_M[m] = 1. / self.E_DK_M[m].mean()
+
+    def _update_alpha(self):
+        M = self.n_modes
+        K = self.n_components
+        vals = self.alpha_vals
+        logF = K * np.sum(self.mode_dims) * (vals * np.log(vals) - sp.gammaln(vals))
+        logF += (K * vals) * np.dot(np.log(self.beta_M), self.mode_dims)
+        logF += (vals - 1.) * np.sum([self.L_DK_M[m].sum() for m in range(M)])
+        logF -= vals * (self.sumE_MK.sum(axis=1) * self.beta_M).sum()
+        self._logZ = logsumexp(logF)
+        Q = np.exp(logF - self._logZ)
+        self.alpha = np.dot(Q, vals)
 
     def _update(self, data, mask=None, modes=None):
         if modes is not None:
@@ -186,6 +227,7 @@ class BPTF(BaseEstimator, TransformerMixin):
             curr_elbo = self._test_elbo(data)
         else:
             curr_elbo = self._elbo(data, mask=mask)
+
         if self.verbose:
             print 'ITERATION %d:\t'\
                   'Time: %f\t'\
@@ -195,6 +237,7 @@ class BPTF(BaseEstimator, TransformerMixin):
 
         for itn in xrange(self.max_iter):
             s = time.time()
+
             for m in modes:
                 self._update_gamma(m, data)
                 self._update_delta(m, mask)
@@ -202,6 +245,10 @@ class BPTF(BaseEstimator, TransformerMixin):
                 if m == 0 or not self.debug:
                     self._update_beta(m)  # must come after cache update!
                 self._check_component(m)
+
+            if self.infer_alpha:
+                self._update_alpha()  # must come last or logZ is stale for bound
+
             if self.debug:
                 bound = self._test_elbo(data)
             else:
@@ -214,34 +261,21 @@ class BPTF(BaseEstimator, TransformerMixin):
                       'Objective: %.2f\t'\
                       'Change: %.5e\t'\
                       % (itn+1, e, bound, delta)
+                print 'Alpha: %f\t Beta_M: %s' % (self.alpha, str(self.beta_M))
             if not (delta >= 0.0):
                 raise Exception('\n\nNegative ELBO improvement: %e\n' % delta)
             curr_elbo = bound
             if delta < self.tol:
                 break
 
-    def set_component(self, m, E_DK, G_DK, gamma_DK, delta_DK):
+    def set_component(self, m, E_DK, L_DK, gamma_DK, delta_DK):
         assert E_DK.shape[1] == self.n_components
         self.E_DK_M[m] = E_DK.copy()
         self.sumE_MK[m, :] = E_DK.sum(axis=0)
-        self.G_DK_M[m] = G_DK.copy()
+        self.L_DK_M[m] = L_DK.copy()
         self.gamma_DK_M[m] = gamma_DK.copy()
         self.delta_DK_M[m] = delta_DK.copy()
         self.beta_M[m] = 1. / E_DK.mean()
-
-    def _clamp_component(self, m, version='geometric'):
-        """Make a component a constant.
-
-        This amounts to setting the expectations under the
-        Q-distribution to be equal to a single point estimate.
-        """
-        assert (version == 'geometric') or (version == 'arithmetic')
-        if version == 'geometric':
-            self.E_DK_M[m][:, :] = self.G_DK_M[m]
-        else:
-            self.G_DK_M[m][:, :] = self.E_DK_M[m]
-        self.sumE_MK[m, :] = self.E_DK_M[m].sum(axis=0)
-        self.beta_M[m] = 1. / self.E_DK_M[m].mean()
 
     def set_component_like(self, m, model, subs_D=None):
         assert model.n_modes == self.n_modes
@@ -251,10 +285,10 @@ class BPTF(BaseEstimator, TransformerMixin):
             subs_D = np.arange(D)
         assert min(subs_D) >= 0 and max(subs_D) < D
         E_DK = model.E_DK_M[m][subs_D, :].copy()
-        G_DK = model.G_DK_M[m][subs_D, :].copy()
+        L_DK = model.L_DK_M[m][subs_D, :].copy()
         gamma_DK = model.gamma_DK_M[m][subs_D, :].copy()
         delta_DK = model.delta_DK_M[m][subs_D, :].copy()
-        self.set_component(m, E_DK, G_DK, gamma_DK, delta_DK)
+        self.set_component(m, E_DK, L_DK, gamma_DK, delta_DK)
 
     def fit(self, data, mask=None):
         assert data.ndim == self.n_modes
@@ -290,7 +324,7 @@ class BPTF(BaseEstimator, TransformerMixin):
         self._update(data, mask=mask, modes=modes)
 
         if version == 'geometric':
-            return [self.G_DK_M[m] for m in modes]
+            return [np.exp(self.L_DK_M[m]) for m in modes]
         elif version == 'arithmetic':
             return [self.E_DK_M[m] for m in modes]
 
@@ -301,7 +335,7 @@ class BPTF(BaseEstimator, TransformerMixin):
         self.fit(data, mask=mask)
 
         if version == 'geometric':
-            return [self.G_DK_M[m] for m in modes]
+            return [np.exp(self.L_DK_M[m]) for m in modes]
         elif version == 'arithmetic':
             return [self.E_DK_M[m] for m in modes]
 
@@ -312,7 +346,7 @@ class BPTF(BaseEstimator, TransformerMixin):
         """
         assert (version == 'geometric') or (version == 'arithmetic')
         if version == 'geometric':
-            tmp = [G_DK.copy() for G_DK in self.G_DK_M]
+            tmp = [np.exp(L_DK.copy()) for L_DK in self.L_DK_M]
         elif version == 'arithmetic':
             tmp = [E_DK.copy() for E_DK in self.E_DK_M]
 
