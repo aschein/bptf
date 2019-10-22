@@ -3,7 +3,7 @@ import numpy.random as rn
 import sktensor as skt
 
 import pickle
-from path import path
+from path import Path
 from time import sleep
 
 
@@ -134,8 +134,8 @@ def sp_uttkrp(vals, subs, m, U):
     """
     D, K = U[m].shape
     out = np.zeros_like(U[m])
-    for k in xrange(K):
-        tmp = vals.copy()
+    for k in range(K):
+        tmp = vals.astype(float)
         for mode, matrix in enumerate(U):
             if mode == m:
                 continue
@@ -218,7 +218,7 @@ def parafac(matrices, axis=None):
 def serialize_bptf(model, out_dir, num=None, desc=None):
     if desc is None:
         desc = 'model'
-    out_dir = path(out_dir)
+    out_dir = Path(out_dir)
     assert out_dir.exists()
 
     if num is None:
@@ -237,5 +237,5 @@ def serialize_bptf(model, out_dir, num=None, desc=None):
              gamma_DK_M=model.gamma_DK_M,
              delta_DK_M=model.delta_DK_M,
              beta_M=model.beta_M)
-    print out_path
+    print (out_path)
     return num

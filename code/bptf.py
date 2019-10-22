@@ -9,7 +9,7 @@ import scipy.special as sp
 import sktensor as skt
 from sklearn.base import BaseEstimator, TransformerMixin
 
-from path import path
+from path import Path
 from argparse import ArgumentParser
 from utils import *
 
@@ -42,16 +42,28 @@ class BPTF(BaseEstimator, TransformerMixin):
         # Inference cache
         self.sumE_MK = np.empty((self.n_modes, self.n_components), dtype=float)
         self.nz_recon_I = None
+        self.log_nz_recon_I = None
 
     def _reconstruct_nz(self, subs_I_M):
         """Computes the reconstruction for only non-zero entries."""
         I = subs_I_M[0].size
         K = self.n_components
         nz_recon_IK = np.ones((I, K))
-        for m in xrange(self.n_modes):
+        for m in range(self.n_modes):
             nz_recon_IK *= self.G_DK_M[m][subs_I_M[m], :]
         self.nz_recon_I = nz_recon_IK.sum(axis=1)
         return self.nz_recon_I
+
+    def _log_reconstruct_nz(self, subs_I_M):
+        """Computes the log reconstruction for only non-zero entries."""
+        I = subs_I_M[0].size
+        K = self.n_components
+        log_nz_recon_IK = np.zeros((I, K))
+        for m in range(self.n_modes):
+            log_nz_recon_IK += np.log(self.G_DK_M[m][subs_I_M[m], :])
+
+        self.log_nz_recon_I = sp.logsumexp(log_nz_recon_IK, axis=1)
+        return self.log_nz_recon_I
 
     def _test_elbo(self, data):
         """Copies code from pmf.py.  Used for debugging."""
@@ -97,12 +109,12 @@ class BPTF(BaseEstimator, TransformerMixin):
         elif isinstance(data, skt.sptensor):
             subs_I_M = data.subs
             vals_I = data.vals
-        nz_recon_I = self._reconstruct_nz(subs_I_M)
+        log_nz_recon_I = self._log_reconstruct_nz(subs_I_M)
 
-        bound += (vals_I * np.log(nz_recon_I)).sum()
+        bound += (vals_I * log_nz_recon_I).sum()
 
         K = self.n_components
-        for m in xrange(self.n_modes):
+        for m in range(self.n_modes):
             bound += _gamma_bound_term(pa=self.alpha,
                                        pb=self.alpha * self.beta_M[m],
                                        qa=self.gamma_DK_M[m],
@@ -187,13 +199,13 @@ class BPTF(BaseEstimator, TransformerMixin):
         else:
             curr_elbo = self._elbo(data, mask=mask)
         if self.verbose:
-            print 'ITERATION %d:\t'\
+            print ('ITERATION %d:\t'\
                   'Time: %f\t'\
                   'Objective: %.2f\t'\
                   'Change: %.5e\t'\
-                % (0, 0.0, curr_elbo, np.nan)
+                % (0, 0.0, curr_elbo, np.nan))
 
-        for itn in xrange(self.max_iter):
+        for itn in range(self.max_iter):
             s = time.time()
             for m in modes:
                 self._update_gamma(m, data)
@@ -209,11 +221,11 @@ class BPTF(BaseEstimator, TransformerMixin):
             delta = (bound - curr_elbo) / abs(curr_elbo)
             e = time.time() - s
             if self.verbose:
-                print 'ITERATION %d:\t'\
+                print ('ITERATION %d:\t'\
                       'Time: %f\t'\
                       'Objective: %.2f\t'\
                       'Change: %.5e\t'\
-                      % (itn+1, e, bound, delta)
+                      % (itn+1, e, bound, delta))
             if not (delta >= 0.0):
                 raise Exception('\n\nNegative ELBO improvement: %e\n' % delta)
             curr_elbo = bound
@@ -323,9 +335,9 @@ class BPTF(BaseEstimator, TransformerMixin):
 
 def main():
     p = ArgumentParser()
-    p.add_argument('-d', '--data', type=path, required=True)
-    p.add_argument('-o', '--out', type=path, required=True)
-    p.add_argument('-m', '--mask', type=path, default=None)
+    p.add_argument('-d', '--data', type=Path, required=True)
+    p.add_argument('-o', '--out', type=Path, required=True)
+    p.add_argument('-m', '--mask', type=Path, default=None)
     p.add_argument('-k', '--n_components', type=int, required=True)
     p.add_argument('-n', '--max_iter', type=int, default=200)
     p.add_argument('-t', '--tol', type=float, default=1e-4)
