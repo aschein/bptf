@@ -29,7 +29,7 @@ def is_sparse(X):
     S = number of entries
     I = number of non-zero entries
 
-            N > M(I + 1)
+            S > M(I + 1)
     """
     M = X.ndim
     S = X.size

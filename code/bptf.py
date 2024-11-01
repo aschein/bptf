@@ -14,9 +14,51 @@ from argparse import ArgumentParser
 from utils import *
 
 
-def _gamma_bound_term(pa, pb, qa, qb):
-    return sp.gammaln(qa) - pa * np.log(qb) + \
-        (pa - qa) * sp.psi(qa) + qa * (1 - pb / qb)
+# def elbo(Y, alpha_DK_M, beta_DK_M, E_DK_M=None, G_DK_M=None, c_M=None, alpha=0.1, compute_constant=True):
+#     if E_DK_M is None:
+#         E_DK_M = [alpha_DK / beta_DK for (alpha_DK, beta_DK) in zip(alpha_DK_M, beta_DK_M)]
+
+#     if G_DK_M is None:
+#         G_DK_M = [np.exp(sp.psi(alpha_DK) - np.log(beta_DK)) for (alpha_DK, beta_DK) in zip(alpha_DK_M, beta_DK_M)]
+
+#     if c_M is None:
+#         c_M = np.array([1 / E_DK.mean() for E_DK in E_DK_M])
+
+#     sumE_MK = np.array([E_DK.sum(axis=0) for E_DK in E_DK_M])
+#     uttkrp_K = sumE_MK.prod(axis=0)
+
+#     bound = -uttkrp_K.sum()
+
+#     reconstruction = parafac(G_DK_M)
+
+#     bound += (Y * np.log(reconstruction)).sum()
+
+#     K = E_DK_M[0].shape[1]
+#     mode_dims = Y.shape
+#     for m in range(len(mode_dims)):
+#         bound += _gamma_bound_term(pa=alpha,
+#                                    pb=alpha * c_M[m],
+#                                    qa=alpha_DK_M[m],
+#                                    qb=beta_DK_M[m],
+#                                    compute_constant=compute_constant).sum()
+#         bound += K * mode_dims[m] * alpha * np.log(c_M[m])
+
+#     if compute_constant:
+#         bound -= np.log1p(Y).sum()
+    
+#     return bound
+
+
+
+def _gamma_bound_term(pa, pb, qa, qb, compute_constant=False):
+    out = sp.gammaln(qa) - pa * np.log(qb) + \
+          (pa - qa) * sp.psi(qa) + qa * (1 - pb / qb)
+    
+    if compute_constant:
+        """These terms do not depend on variational parameters."""
+        out += pa * np.log(pb) - sp.gammaln(pa)
+
+    return out
 
 
 class BPTF(BaseEstimator, TransformerMixin):
