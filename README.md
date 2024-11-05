@@ -25,40 +25,23 @@ SOFTWARE.
 
 ## What's included:
 
-* [bptf.py](https://github.com/aschein/bptf/blob/master/code/bptf.py): The main code file.  Implements batch variational inference for BPTF.
-* [utils.py](https://github.com/aschein/bptf/blob/master/code/utils.py): Utility functions.  Includes some important multilinear algebra functions (e.g., PARAFAC, Khatri-Rao product), preprocessing functions, and serialization functions.
-* [anomaly_detection.py](https://github.com/aschein/bptf/blob/master/code/anomaly_detection.py): An example application of using BPTF for anomaly detection.
+* [bptf.py](https://github.com/aschein/bptf/blob/master/src/bptf/bptf.py): The main code file.  Implements batch variational inference for BPTF.
+* [tensor_utils.py](https://github.com/aschein/bptf/blob/master/src/bptf/tensor_utils.py): Includes some useful/efficient utils and tensor operations, including a faster re-implementation of tensorly's unfolding_dot_khatri_rao.
+* [ICEWS.py](https://github.com/aschein/bptf/blob/master/examples/anomaly_detection.py): An example application of using BPTF to factorize the ICEWS tensor discussed in the paper.
+* [anomaly_detection.py](https://github.com/aschein/bptf/blob/master/examples/anomaly_detection.py): An example application of using BPTF for anomaly detection.
 
 ## Dependencies:
 
-* argparse
-* numpy
-* path
-* pickle
+* tensorly
 * scikit-learn
-* scikit-tensor
+* sparse
 
 ## How to run the code:
 
-BPTF can be run from the command line as follows:
-```
-python bptf.py -d=$DATA_DIR/data.dat -o=$OUT_DIR -k=25
-```
-#### Required arguments:
-* `-d` : Path to the pickled data tensor (see below for details on data format)
-* `-o` : Directory to dump results
-* `-k` : Number of latent components
-
-#### Optional arguments:
-* `-m` : Path to a binary mask (e.g., for prediction experiments), default is None
-* `-n` : Maximum number of iterations to run inference, default is 200
-* `-t` : Tolerance level (inference stops after percent change in the bound is less than this), default is 1e-4
-* `-s` : How the smooth random initialization of variational parameters is, default is 100
-* `-a` : Alpha, the prior shape parameter for Gamma-distributed latent factors, default is 0.1 (sparsity-inducing)
-* `-v` : Verbose (if toggled, inference will printout information every iteration).
-
 ### Data format
-Input data tensor must be stored as a `numpy.ndarray` or `sktensor.dtensor` (for dense tensors) or a `sktensor.sptensor` (for sparse tensors).  The object can either be pickled with `pickle.dump` into a file with any extension (e.g., `.dat`) or can be put inside a `.npz` file ([Numpy's compressed file format](http://docs.scipy.org/doc/numpy/reference/routines.io.html)) along with another other associated arrays (e.g., metadata).  If using a `.npz` file, the data tensor's key must be either be `data` or `Y`.  A few examples are given below:
+Input data tensor must be stored as `numpy.ndarray` (for dense tensors) or as `sparse._coo.core.COO` (for sparse tensors).  If you pass a  `numpy.ndarray` in, the code will check if it is sparse, and preprocess it into a `sparse._coo.core.COO`
+
+A few examples are given below:
 
 #### Using `numpy.ndarray` or `sktensor.dtensor` and `pickle`
 ```
