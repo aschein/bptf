@@ -36,6 +36,20 @@ SOFTWARE.
 * scikit-learn
 * sparse
 
+## Installation
+
+First, clone the repository:
+
+```bash
+git clone https://github.com/aschein/bptf.git
+cd bptf
+```
+
+Then, install the package in editable mode:
+```bash
+pip install -e .
+```
+
 ## How to run the code:
 
 ### Data format
