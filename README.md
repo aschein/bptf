@@ -27,8 +27,8 @@ SOFTWARE.
 
 * [bptf.py](https://github.com/aschein/bptf/blob/master/src/bptf/bptf.py): The main code file.  Implements batch variational inference for BPTF.
 * [tensor_utils.py](https://github.com/aschein/bptf/blob/master/src/bptf/tensor_utils.py): Includes some useful/efficient utils and tensor operations, including a faster re-implementation of tensorly's unfolding_dot_khatri_rao.
-* [ICEWS.py](https://github.com/aschein/bptf/blob/master/examples/anomaly_detection.py): An example application of using BPTF to factorize the ICEWS tensor discussed in the paper.
-* [anomaly_detection.py](https://github.com/aschein/bptf/blob/master/examples/anomaly_detection.py): An example application of using BPTF for anomaly detection.
+* [ICEWS.py](https://github.com/aschein/bptf/blob/master/examples/ICEWS/ICEWS.py): An example application of using BPTF to factorize the ICEWS tensor discussed in the paper.
+* [anomaly_detection.py](https://github.com/aschein/bptf/blob/master/examples/anomaly_detection/anomaly_detection.py): An example application of using BPTF for anomaly detection.
 
 ## Dependencies:
 
