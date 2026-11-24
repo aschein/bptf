@@ -2,6 +2,7 @@
 Bayesian Poisson tensor factorization with variational inference.
 """
 import time
+import warnings
 import numpy as np
 import numpy.random as rn
 import scipy.special as sp
@@ -11,6 +12,8 @@ import sparse
 import tensorly as tl
 from tensorly.cp_tensor import CPTensor
 from sklearn.base import BaseEstimator, TransformerMixin
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.utils.validation import check_is_fitted
 
 from pathlib import Path
 from tqdm import tqdm
@@ -265,33 +268,147 @@ class BPTF(BaseEstimator, TransformerMixin):
         self._init()
 
         self._update(data, mask=mask, missing_val=missing_val, **kwargs)
+        self.is_fitted_ = True
         return self
 
-    def transform(self, modes, data, mask=None, expectation='geometric', **kwargs):
-        """Transform new data given a pre-trained model."""
-        assert all(m in range(self.n_modes) for m in modes)
-        assert type(data) in [sparse._coo.core.COO, np.ndarray]
-        assert data.ndim == self.n_modes
-        data = preprocess(data)
+    def transform(self, data, *, mode, mask=None, missing_val=1,
+                  expectation='geometric', max_iter=200, tol=1e-4, verbose=False):
+        """Infer one factor matrix without changing the fitted model.
 
+        Parameters
+        ----------
+        data : numpy.ndarray or sparse.COO
+            Finite, nonnegative integer counts. Only the selected axis may
+            differ in size from training. Other axes must contain the same
+            entities in the same order; labels are not checked automatically.
+        mode : int
+            Axis whose factors to infer. Returns an array of shape
+            ``(data.shape[mode], n_components)`` in input order.
+        mask : numpy.ndarray or sparse.COO, optional
+            Binary array with the same shape as data. Entries equal to
+            ``missing_val`` are unobserved and excluded from inference.
+            Sparse data and masks must have zero fill values. Unstored data
+            entries are observed zeros unless masked out.
+        missing_val : {0, 1}, default=1
+            Mask value indicating an unobserved entry.
+        expectation : {'geometric', 'arithmetic'}, default='geometric'
+            Statistic of the inferred Gamma distributions to return.
+        max_iter : int, default=200
+            Maximum number of local variational updates.
+        tol : float, default=1e-4
+            Stop each row independently when its maximum shape-parameter
+            change, divided by max(1, previous shape), is at most tol.
+        verbose : bool, default=False
+            Display iteration progress.
+
+        Notes
+        -----
+        The other modes' full variational distributions and all hyperparameters
+        remain fixed. Initialization is deterministic and each converged row is
+        frozen, so processing rows separately or in batches gives the same
+        result up to floating-point error. No model arrays or random state are
+        modified. A ConvergenceWarning is issued for unfinished rows.
+        """
+        check_is_fitted(self, 'is_fitted_')
+        if (isinstance(mode, (bool, np.bool_)) or
+                not isinstance(mode, (int, np.integer)) or
+                not 0 <= mode < self.n_modes):
+            raise ValueError('mode must be a single integer axis in [0, n_modes).')
+        if expectation not in ('geometric', 'arithmetic'):
+            raise ValueError("expectation must be 'geometric' or 'arithmetic'.")
+        if (isinstance(max_iter, (bool, np.bool_)) or
+                not isinstance(max_iter, (int, np.integer)) or max_iter < 1):
+            raise ValueError('max_iter must be a positive integer.')
+        if not np.isscalar(tol) or not np.isfinite(tol) or tol < 0:
+            raise ValueError('tol must be finite and nonnegative.')
+        if missing_val not in (0, 1):
+            raise ValueError('missing_val must be 0 or 1.')
+
+        def values_of(array, name):
+            if not isinstance(array, (np.ndarray, sparse.COO)):
+                raise TypeError(f'{name} must be a numpy.ndarray or sparse.COO.')
+            if isinstance(array, sparse.COO) and array.fill_value != 0:
+                raise ValueError(f'{name} must have a zero sparse fill value.')
+            values = array.data if isinstance(array, sparse.COO) else array
+            if (array.dtype.kind not in 'biuf' or
+                    not np.isfinite(values).all() or (values < 0).any() or
+                    (values != np.floor(values)).any()):
+                raise ValueError(f'{name} must contain finite nonnegative integers.')
+            return values
+
+        values_of(data, 'data')
+        if data.ndim != self.n_modes:
+            raise ValueError('data must have the same number of modes as training.')
+        if any(data.shape[m] != self.data_shape[m]
+               for m in range(self.n_modes) if m != mode):
+            raise ValueError('All untransformed axes must match the training shape.')
         if mask is not None:
-            mask = preprocess(mask)
-            assert type(mask) in [sparse._coo.core.COO, np.ndarray]
-            assert data.shape == mask.shape
-            assert is_binary(mask)
-            assert np.issubdtype(mask.dtype, int)
-        
-        assert self.data_shape == data.shape
+            mask_values = values_of(mask, 'mask')
+            if mask.shape != data.shape or (mask_values > 1).any():
+                raise ValueError('mask must be binary and have the same shape as data.')
 
-        for m, D in enumerate(self.data_shape):
-            if m not in modes:
-                if self.E_DK_M[m].shape[0] != D:
-                    raise ValueError('Pre-trained components dont match new data.')
-            else:
-                self._init_mode(m, D, **kwargs)
-        self._update(data, mask=mask, modes=modes)
+        D, K = data.shape[mode], self.n_components
+        if D == 0:
+            return np.empty((0, K), dtype=float)
 
-        return self.G_DK_M[modes] if expectation == 'geometric' else self.E_DK_M[modes]
+        if isinstance(data, sparse.COO):
+            coords, counts = data.coords, data.data
+        else:
+            coords = np.array(data.nonzero())
+            counts = data[tuple(coords)]
+        if mask is not None:
+            masked = mask[tuple(coords)]
+            if isinstance(masked, sparse.COO):
+                masked = masked.todense()
+            observed = masked != missing_val
+            coords, counts = coords[:, observed], counts[observed]
+        rows = coords[mode]
+        counts = counts.astype(float, copy=False)
+
+        # Only the fixed modes contribute to the Gamma rates. In particular,
+        # never recompute beta from the new batch or collapse E[theta] to G[theta].
+        means = [np.asarray(factor, dtype=float) for factor in self.E_DK_M]
+        means[mode] = np.empty((D, K))  # Its values are unused by the contraction.
+        exposure = np.ones(K)
+        log_fixed = np.zeros((counts.size, K))
+        for m in range(self.n_modes):
+            if m != mode:
+                exposure *= means[m].sum(axis=0)
+                # Use the Gamma parameters to avoid taking log of underflowed G.
+                log_fixed += (sp.digamma(self.shp_DK_M[m][coords[m]])
+                              - np.log(self.rte_DK_M[m][coords[m]]))
+        if mask is not None:
+            marked_exposure = unfolding_dot_khatri_rao(
+                mask.astype(float), (None, means), mode)
+            exposure = (np.maximum(exposure - marked_exposure, 0.0)
+                        if missing_val == 1 else marked_exposure)
+        rate = np.broadcast_to(self.alpha * self.beta_M[mode] + exposure, (D, K))
+
+        # Equal initial allocations depend only on each row's observed counts.
+        totals = np.bincount(rows, weights=counts, minlength=D)
+        shape = np.broadcast_to(self.alpha + totals[:, None] / K, (D, K)).copy()
+        active = totals > 0
+        for _ in tqdm(range(max_iter), disable=not verbose):
+            if not active.any():
+                break
+            log_allocations = sp.digamma(shape[rows]) - np.log(rate[rows])
+            log_allocations += log_fixed
+            responsibilities = np.exp(
+                log_allocations - sp.logsumexp(log_allocations, axis=1, keepdims=True))
+            updated = np.full((D, K), self.alpha, dtype=float)
+            for k in range(K):
+                updated[:, k] += np.bincount(
+                    rows, weights=counts * responsibilities[:, k], minlength=D)
+            change = np.max(np.abs(updated - shape) / np.maximum(1.0, shape), axis=1)
+            shape[active] = updated[active]
+            active &= change > tol
+        if active.any():
+            warnings.warn(f'transform did not converge for {active.sum()} rows '
+                          f'within {max_iter} iterations.', ConvergenceWarning,
+                          stacklevel=2)
+        if expectation == 'arithmetic':
+            return shape / rate
+        return np.exp(sp.digamma(shape) - np.log(rate))
 
     def fit_transform(self, modes, data, mask=None, expectation='geometric', **kwargs):
         assert all(m in range(self.n_modes) for m in modes)
@@ -335,5 +452,6 @@ def load_bptf(filepath):
         model._update_cache(m)
         model._check_mode(m)
     model.beta_M[:]= file['beta_M']
+    model.is_fitted_ = True
     
     return model

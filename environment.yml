@@ -1,0 +1,22 @@
+name: bptf
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  - python=3.13
+  - pip
+  - setuptools>=64
+  - wheel
+  - tensorly>=0.8.1
+  - numpy>=2.0.2
+  - scipy>=1.14.1
+  - pandas>=2.2.3
+  - numba>=0.60.0
+  - scikit-learn>=1.5.2
+  - sparse>=0.15.4
+  - ipython
+  - matplotlib-base
+  - seaborn
+  - tqdm
+  - jedi
+  - pytest

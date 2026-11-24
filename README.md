@@ -45,9 +45,95 @@ git clone https://github.com/aschein/bptf.git
 cd bptf
 ```
 
-Then, install the package in editable mode:
+Use one [Miniforge](https://github.com/conda-forge/miniforge) installation and a
+dedicated `bptf` conda environment. Keep `base` for managing conda, disable its
+automatic activation, and use conda-forge with strict channel priority:
+
 ```bash
-pip install -e .
+conda config --set auto_activate false
+conda config --set channel_priority strict
+conda env create --file environment.yml
+conda activate bptf
+python -m pip install --no-deps --no-build-isolation -e .
+python -m pip check
+```
+
+`environment.yml` specifies Python 3.13, the scientific dependencies, and the
+development tools. Conda installs these packages before pip installs only this
+repository in editable mode; changes to its source are immediately available.
+Use `python -m pip` inside the activated environment, without `--user` or `sudo`.
+
+For subsequent sessions:
+
+```bash
+conda activate bptf
+python examples/ICEWS/ICEWS.py  # Requires the example's input data.
+conda deactivate
+```
+
+The environment lives under Miniforge's `envs/bptf` directory. Keep environment
+directories and package caches local; version-control their specifications.
+Update `environment.yml` when dependencies change, and prefer rebuilding from
+the specification over accumulating ad hoc conda/pip changes.
+
+### Reproduce the tested Apple Silicon environment
+
+`conda-osx-arm64.explicit.txt` records the exact conda package artifacts and their
+SHA-256 hashes. It is specific to Apple Silicon macOS; use `environment.yml` on
+other platforms. From this repository, with the intended source revision checked
+out and no existing environment with the chosen name:
+
+```bash
+conda create --name bptf --file conda-osx-arm64.explicit.txt
+conda activate bptf
+python -m pip install --no-deps --no-build-isolation -e .
+python -m pip check
+```
+
+The explicit file covers conda dependencies; the editable BPTF package comes from
+this checkout. After an intentional dependency update and validation, refresh it:
+
+```bash
+conda list --name bptf --explicit --sha256 > conda-osx-arm64.explicit.txt
+```
+
+## Inferring factors for new cells
+
+For a cells-by-genes count matrix, fit on the training cells, then infer factors
+for any number of additional cells with the same genes in the same order:
+
+```python
+model = BPTF(data_shape=Y_train.shape, n_components=K)
+model.fit(Y_train, max_iter=200, verbose=False)
+
+cell_factors = model.transform(Y_new, mode=0, expectation="geometric")
+assert cell_factors.shape == (Y_new.shape[0], K)
+```
+
+`transform(data, *, mode=...)` accepts one integer axis and returns one factor
+matrix. This replaces the old `transform(modes=[...], data=...)` interface. Only
+the selected axis may change size. Other axes must retain their training entities
+and ordering; the method checks their sizes but does not track entity labels.
+
+The trained model is unchanged: its factor distributions, hyperparameters, and
+training reconstruction are preserved. Inference retains both the arithmetic
+and geometric expectations of the fixed factors. Use `expectation="arithmetic"`
+to return the inferred Gamma means instead of geometric expectations.
+
+Initialization is deterministic and convergence is checked separately for each
+row. Concatenating results from batches gives the same factors as transforming
+all rows together, up to floating-point error. `max_iter` defaults to 200 and
+`tol` to 1e-4; here `tol` measures relative shape-parameter change per row. An
+unfinished projection emits `sklearn.exceptions.ConvergenceWarning`.
+
+Dense NumPy arrays and zero-filled `sparse.COO` tensors are supported. An optional
+binary `mask` has the data's shape; entries equal to `missing_val` (default 1)
+are excluded. Unstored sparse counts are observed zeros unless masked out.
+
+Run the projection regression tests in the `bptf` environment:
+
+```bash
+python -m pytest -q
 ```
 
 ## How to run the code:
