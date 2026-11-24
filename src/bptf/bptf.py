@@ -216,6 +216,8 @@ class BPTF(BaseEstimator, TransformerMixin):
                 self._clamp_component(m)
 
         curr_elbo = self._elbo(data, mask=mask)
+        if not np.isfinite(curr_elbo):
+            raise FloatingPointError('Initial ELBO must be finite.')
         
         if kwargs.get('verbose', True):
             print ('ITERATION %d:\t'\
@@ -232,7 +234,10 @@ class BPTF(BaseEstimator, TransformerMixin):
                 self._update_beta(m)
                 self._check_mode(m)
             bound = self._elbo(data, mask=mask)
-            delta = (bound - curr_elbo) / abs(curr_elbo)
+            if not np.isfinite(bound):
+                raise FloatingPointError(f'ELBO must be finite at iteration {itn + 1}.')
+            # Guard the diagnostic's denominator; convergence uses isclose below.
+            delta = (bound - curr_elbo) / max(abs(curr_elbo), 1e-12)
             e = time.time() - s
             
             if kwargs.get('verbose', True):
@@ -242,9 +247,15 @@ class BPTF(BaseEstimator, TransformerMixin):
                       'Change: %.5e\t'\
                       % (itn+1, e, bound, delta))
             
-            assert delta >= 0.0
+            # Numerical tolerance stays independent of the stopping tolerance.
+            if bound < curr_elbo and not np.isclose(
+                    bound, curr_elbo, rtol=1e-12, atol=1e-12):
+                raise RuntimeError('ELBO decreased beyond numerical tolerance '
+                                   f'at iteration {itn + 1}: {curr_elbo} -> {bound}.')
+            converged = np.isclose(bound, curr_elbo,
+                                   rtol=kwargs.get('tol', 1e-4), atol=1e-12)
             curr_elbo = bound
-            if delta < kwargs.get('tol', 1e-4):
+            if converged:
                 break
 
     def _clamp_component(self, m):
